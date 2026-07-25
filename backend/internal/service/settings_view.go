@@ -522,9 +522,9 @@ func DefaultRateLimit429CooldownSettings() *RateLimit429CooldownSettings {
 // DefaultBetaPolicySettings 返回默认的 Beta 策略配置
 //
 // context-1m-2025-08-07 的默认策略：
-//   - 仅 claude-sonnet-5 及后续版本（如 claude-sonnet-5-*）在上游默认支持 1M 上下文。
-//   - Sonnet 4.x 及以下、Opus、Haiku 上游都不支持该 beta，透传上去会被上游 400 或降级。
-//   - 因此默认对 sonnet-5* 放行、其余全部过滤，与上游能力保持一致。
+//   - 仅 claude-sonnet-5、claude-opus-5 及后续版本在上游默认支持 1M 上下文。
+//   - Sonnet 4.x、Opus 4.x 及以下、Haiku 上游都不支持该 beta，透传上去会被上游 400 或降级。
+//   - 因此默认对 sonnet-5* / opus-5* 放行、其余全部过滤，与上游能力保持一致。
 //
 // 白名单需要覆盖每个上游路径的模型 ID 变形：
 //   - 直连 Anthropic API（OAuth mimic / API Key / SetupToken）：模型保持客户端原样
@@ -535,8 +535,8 @@ func DefaultRateLimit429CooldownSettings() *RateLimit429CooldownSettings {
 //     （us./eu./apac./jp./au./us-gov./global. 或无前缀的 "anthropic." 形式）。
 //
 // 白名单只用后缀通配符（matchModelPattern 语义），因此每个路径都需要显式列出前缀。
-// 精确匹配 "claude-sonnet-5" + 后缀 "-*" 与 "@*"，可覆盖直连/Vertex 场景，同时避免误伤
-// 未来可能出现的 "claude-sonnet-50" 或 "claude-sonnet-5.x" 之类的意外命名。
+// 精确匹配 "claude-sonnet-5" / "claude-opus-5" + 后缀 "-*" 与 "@*"，可覆盖直连/Vertex
+// 场景，同时避免误伤未来可能出现的 "claude-sonnet-50" 或 "claude-opus-5.x" 之类的意外命名。
 func DefaultBetaPolicySettings() *BetaPolicySettings {
 	return &BetaPolicySettings{
 		Rules: []BetaPolicyRule{
@@ -565,6 +565,18 @@ func DefaultBetaPolicySettings() *BetaPolicySettings {
 					"global.anthropic.claude-sonnet-5*",
 					// AWS Bedrock 无 cross-region 前缀
 					"anthropic.claude-sonnet-5*",
+					// claude-opus-5：同样覆盖直连 / Vertex / Bedrock 三类变形
+					"claude-opus-5",
+					"claude-opus-5-*",
+					"claude-opus-5@*",
+					"us.anthropic.claude-opus-5*",
+					"eu.anthropic.claude-opus-5*",
+					"apac.anthropic.claude-opus-5*",
+					"jp.anthropic.claude-opus-5*",
+					"au.anthropic.claude-opus-5*",
+					"us-gov.anthropic.claude-opus-5*",
+					"global.anthropic.claude-opus-5*",
+					"anthropic.claude-opus-5*",
 				},
 				FallbackAction: BetaPolicyActionFilter,
 			},

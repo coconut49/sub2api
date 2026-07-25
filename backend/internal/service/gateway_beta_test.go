@@ -311,3 +311,57 @@ func TestDefaultBetaPolicy_Context1M_Sonnet5Whitelist(t *testing.T) {
 		})
 	}
 }
+
+// TestDefaultBetaPolicy_Context1M_Opus5Whitelist 验证默认策略下 context-1m-2025-08-07 对
+// claude-opus-5 的放行（opus-5 上游原生支持 1M 上下文），以及 opus-4.x 及以下继续过滤。
+// 结构与 sonnet-5 的测试一致，覆盖直连 / Vertex / Bedrock 三类模型 ID 变形。
+func TestDefaultBetaPolicy_Context1M_Opus5Whitelist(t *testing.T) {
+	settings := DefaultBetaPolicySettings()
+
+	var rule *BetaPolicyRule
+	for i := range settings.Rules {
+		if settings.Rules[i].BetaToken == "context-1m-2025-08-07" {
+			rule = &settings.Rules[i]
+			break
+		}
+	}
+	require.NotNil(t, rule, "default policy must include context-1m-2025-08-07 rule")
+
+	cases := []struct {
+		model      string
+		wantAction string
+		desc       string
+	}{
+		// —— 直连 Anthropic API —— opus-5 系列应放行
+		{"claude-opus-5", BetaPolicyActionPass, "opus-5 canonical"},
+		{"claude-opus-5-20260724", BetaPolicyActionPass, "opus-5 dated variant matches wildcard"},
+		{"claude-opus-5-thinking", BetaPolicyActionPass, "opus-5 thinking variant matches wildcard"},
+		// —— Vertex AI 归一化后的 opus-5 —— 也应放行
+		{"claude-opus-5@20260724", BetaPolicyActionPass, "opus-5 Vertex-normalized dated form"},
+		// —— AWS Bedrock 各跨区域前缀 opus-5 —— 也应放行
+		{"us.anthropic.claude-opus-5-v1", BetaPolicyActionPass, "bedrock us. opus-5"},
+		{"eu.anthropic.claude-opus-5-20260724-v1:0", BetaPolicyActionPass, "bedrock eu. opus-5 dated"},
+		{"apac.anthropic.claude-opus-5-v1", BetaPolicyActionPass, "bedrock apac. opus-5"},
+		{"jp.anthropic.claude-opus-5-v1", BetaPolicyActionPass, "bedrock jp. opus-5"},
+		{"au.anthropic.claude-opus-5-v1", BetaPolicyActionPass, "bedrock au. opus-5"},
+		{"us-gov.anthropic.claude-opus-5-v1", BetaPolicyActionPass, "bedrock us-gov. opus-5"},
+		{"global.anthropic.claude-opus-5-v1", BetaPolicyActionPass, "bedrock global. opus-5"},
+		{"anthropic.claude-opus-5-v1", BetaPolicyActionPass, "bedrock no-region opus-5"},
+
+		// —— opus-4.x 及以下必须继续过滤 ——
+		{"claude-opus-4-8", BetaPolicyActionFilter, "opus-4.8 must be filtered"},
+		{"claude-opus-4-7", BetaPolicyActionFilter, "opus-4.7 must be filtered"},
+		{"claude-opus-4-5-20251101", BetaPolicyActionFilter, "opus-4.5 dated must be filtered"},
+		{"claude-opus-4-5@20251101", BetaPolicyActionFilter, "opus-4.5 Vertex format must be filtered"},
+		{"us.anthropic.claude-opus-4-8-v1", BetaPolicyActionFilter, "bedrock us. opus-4.8 must be filtered"},
+		// —— 特殊边界：不应把 "claude-opus-50" 之类意外命名误放行 ——
+		{"claude-opus-50", BetaPolicyActionFilter, "must not over-match a hypothetical opus-50"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.model, func(t *testing.T) {
+			action, _ := resolveRuleAction(*rule, tc.model)
+			require.Equal(t, tc.wantAction, action, tc.desc)
+		})
+	}
+}
