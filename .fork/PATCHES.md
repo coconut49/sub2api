@@ -29,3 +29,8 @@
 
 - Issue：https://github.com/coconut49/sub2api/issues/3
 - 退役条件：上游重构该注入路径（改用 sjson 或将注入并入转换器），rebase 冲突时以上游为准并删除本 patch。
+
+## perf-thinking-precheck — perf(service): FilterThinkingBlocks 增加常态 fast path（该步 6.4x→0,整链 8.5x→2.1x）
+
+- Issue：https://github.com/coconut49/sub2api/issues/4
+- 退役条件：上游为 FilterThinkingBlocks 自行加上等效 fast path（rebase 后 `filter_thinking_blocks_fork_test.go` 的 AllocCeiling 测试仍绿），删除本 fork 的预检实现，保留测试作回归守卫。
