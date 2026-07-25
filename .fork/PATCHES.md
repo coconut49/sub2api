@@ -19,3 +19,8 @@
 
 - Issue：https://github.com/coconut49/sub2api/issues/1
 - 退役条件：某测试的 "amplification appears fixed" 断言失败 = 上游已优化对应路径，删除该测试并退役依赖它的优化 patch。
+
+## fix-usage-ctx-capture — fix(handler): 异步 usage 闭包延迟读已复用的 gin.Context,跨请求计费归因错误与 data race
+
+- Issue：https://github.com/coconut49/sub2api/issues/2
+- 退役条件：上游自行修复所有调用点（rebase 冲突时以上游为准，丢弃对应 hunk）；证据测试的 deferred 子测试若因 gin 池语义变化而失败，patch 连同测试一起退役。
