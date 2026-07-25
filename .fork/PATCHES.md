@@ -23,3 +23,19 @@
   - `backend/internal/service/gateway_forward_chain_amplification_evidence_test.go`：/v1/messages 改写链逐步测量。实测：Claude Code 客户端路径总 churn 8.5×，其中 FilterThinkingBlocks 单步 6.4×（无条件泛型图 unmarshal，无 fast path；对比 StripEmptyTextBlocks/FilterWebSearchHistoryBlocks 均为 0）；第三方客户端 mimicry 路径总 churn 49.3×（applyToolsLastCacheBreakpoint 单步 28.3×）。这两个数字是后续优化 patch 的候选靶点。
 - 背景：上游 issue #4365(v0.1.156 内存暴涨，Codex 长上下文场景)、#1465(上游账号异常时内存占用高)均未解决；上游无相关修复 PR。
 - 退役条件：某个测试的"amplification appears fixed"断言开始失败，即说明上游已优化对应路径，删除该测试文件并退役依赖它的优化 patch。
+
+## fix-usage-ctx-capture — 异步计费闭包不再延迟读 gin.Context
+
+- 用途：修复 11 处异步 usage-record 闭包在 worker 执行时才调用 `clientRequestedUsageFields(c, ...)` 的 bug。gin 在 handler 返回后把 `*gin.Context` 放回 sync.Pool 复用，延迟读 c 会拿到其他并发请求的 RequestedPublicModel（计费归因串号）+ data race，且闭包钉住整个 context 引用图（含完整请求体）直到队列(上限 16384)排空。机制由证据测试确定性复现（gin 池复用后延迟求值读到 B 请求的模型）。
+- 涉及：
+  - 修改（每处一行 hoist + 一行替换，与上游 `:535` 自己 hoist ForceCacheBilling 的既有模式一致）：`gateway_handler.go`(×2)、`gateway_handler_chat_completions.go`、`gateway_handler_responses.go`、`gemini_v1beta_handler.go`、`openai_chat_completions.go`、`openai_embeddings.go`、`openai_gateway_handler.go`(×3)、`openai_images.go`。
+  - 新增：`backend/internal/handler/gateway_usage_context_capture_evidence_test.go`。
+- 退役条件：上游自行修复所有调用点（rebase 时若上游已把求值挪到闭包外，丢弃本 patch 对应 hunk；证据测试的 deferred 子测试若因 gin 池语义变化而失败，整个 patch 连同测试一起退役）。
+
+## perf-prompt-cache-key-inject — CC API-key 分支注入去 map 往返
+
+- 用途：`forwardChatCompletions` API-key 分支为注入一个 `prompt_cache_key` 字段把整个 responsesBody unmarshal 成 `map[string]any` 再 marshal 回来，实测 churn 6.21×；提取为 `injectPromptCacheKeyIfAbsent` 并改用 gjson/sjson 后 1.02×。行为语义由 5 个等价用例锁定（含 blank/非字符串/无效 JSON 边界）。注意：OAuth 分支的 map 是 `applyCodexOAuthTransformWithOptions` 的承重结构，刻意不动。
+- 涉及：
+  - 新增：`backend/internal/service/openai_prompt_cache_key.go`、`openai_prompt_cache_key_test.go`。
+  - 修改：`openai_gateway_chat_completions.go` API-key 分支 15 行换 6 行调用。
+- 退役条件：上游重构该注入路径（如自己改用 sjson 或将 prompt_cache_key 并入转换器），rebase 冲突时以上游为准并删除本 patch。

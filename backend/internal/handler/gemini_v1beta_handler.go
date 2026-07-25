@@ -532,6 +532,8 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		// ForceCacheBilling 提前拍成标量，避免 worker 闭包保活 failover 状态里的响应体。
 		forceCacheBilling := fs.ForceCacheBilling
 		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
+		// ChannelUsageFields 提前求值：worker 执行时 gin 已把 c 放回 sync.Pool 复用。
+		channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel)
 		h.submitUsageRecordTask(c.Request.Context(), func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsageWithLongContext(ctx, &service.RecordUsageLongContextInput{
 				Result:                result,
@@ -549,7 +551,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				LongContextMultiplier: 2.0,    // 超出部分双倍计费
 				ForceCacheBilling:     forceCacheBilling,
 				APIKeyService:         h.apiKeyService,
-				ChannelUsageFields:    clientRequestedUsageFields(c, channelMapping, reqModel, result.UpstreamModel),
+				ChannelUsageFields:    channelUsageFields,
 			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.gemini_v1beta.models"),
