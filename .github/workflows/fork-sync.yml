@@ -1,0 +1,159 @@
+name: Fork Sync
+
+# 轮询上游 release tag，落后时把 fork patch 栈 rebase 到最新 tag 上。
+# 流程与约定见 .fork/MAINTENANCE.md。
+
+on:
+  schedule:
+    - cron: '23 */2 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: fork-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Detect upstream release
+        id: detect
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/Wei-Shaw/sub2api.git
+          git fetch upstream main --tags
+          LATEST=$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          BASE=$(git describe --tags --exact-match --exclude '*-fork.*' "$(git merge-base HEAD upstream/main)")
+          echo "LATEST=$LATEST" >> "$GITHUB_ENV"
+          echo "BASE=$BASE" >> "$GITHUB_ENV"
+          if [ "$BASE" = "$LATEST" ]; then
+            echo "already at $LATEST, nothing to do"
+            echo "up_to_date=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "rebase needed: $BASE -> $LATEST"
+            echo "up_to_date=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore rerere cache
+        if: steps.detect.outputs.up_to_date == 'false'
+        uses: actions/cache@v4
+        with:
+          path: .git/rr-cache
+          key: rerere-${{ github.run_id }}
+          restore-keys: rerere-
+
+      - name: Rebase onto latest release
+        id: rebase
+        if: steps.detect.outputs.up_to_date == 'false'
+        run: |
+          set -euo pipefail
+          git config user.name 'fork-sync[bot]'
+          git config user.email 'fork-sync[bot]@users.noreply.github.com'
+          git config rerere.enabled true
+          git config rerere.autoUpdate true
+          if git rebase --onto "$LATEST" "$BASE" main; then
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # rerere 可能已自动解掉全部冲突，只差 continue；循环推进到真正的冲突或完成
+          while { [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; } \
+              && [ -z "$(git diff --name-only --diff-filter=U)" ]; do
+            GIT_EDITOR=true git rebase --continue || break
+          done
+          if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then
+            echo "conflicts=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve conflicts with Claude
+        if: steps.rebase.outputs.conflicts == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          set -euo pipefail
+          npm install -g @anthropic-ai/claude-code
+          git show origin/main:.fork/prompts/resolve-rebase.md | claude -p --dangerously-skip-permissions
+
+      - name: Verify rebase completed
+        if: steps.detect.outputs.up_to_date == 'false'
+        run: |
+          set -euo pipefail
+          test ! -d .git/rebase-merge
+          test ! -d .git/rebase-apply
+          test "$(git merge-base HEAD upstream/main)" = "$(git rev-parse "$LATEST^{commit}")"
+
+      - uses: actions/setup-go@v6
+        if: steps.detect.outputs.up_to_date == 'false'
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Backend tests
+        if: steps.detect.outputs.up_to_date == 'false'
+        working-directory: backend
+        run: |
+          make test-unit
+          make test-integration
+
+      - name: Setup pnpm
+        if: steps.detect.outputs.up_to_date == 'false'
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v6
+        if: steps.detect.outputs.up_to_date == 'false'
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Frontend tests
+        if: steps.detect.outputs.up_to_date == 'false'
+        run: |
+          cd frontend && pnpm install --frozen-lockfile && cd ..
+          make test-frontend
+
+      - name: Push and tag
+        if: steps.detect.outputs.up_to_date == 'false'
+        run: |
+          set -euo pipefail
+          git push --force-with-lease origin main
+          N=1
+          while git rev-parse -q --verify "refs/tags/${LATEST}-fork.${N}" >/dev/null; do N=$((N + 1)); done
+          TAG="${LATEST}-fork.${N}"
+          git tag -a "$TAG" -m "Rebase fork patches onto ${LATEST} (was ${BASE})"
+          git push origin "$TAG"
+          echo "released $TAG"
+
+      - name: Report failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then
+            git rebase --abort || true
+            STATE="rebase 未完成（已 abort，未推送任何内容）"
+          else
+            BRANCH="sync-failed/${LATEST:-unknown}-run${{ github.run_id }}"
+            git push origin "HEAD:refs/heads/${BRANCH}" || true
+            STATE="rebase 已完成但测试未通过，结果在分支 ${BRANCH}"
+          fi
+          gh issue create \
+            --title "fork-sync failed: ${BASE:-?} -> ${LATEST:-?}" \
+            --body "${STATE}
+
+          处理方式见 .fork/MAINTENANCE.md「自动同步」一节。
+          Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
