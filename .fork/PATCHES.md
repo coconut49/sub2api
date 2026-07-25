@@ -20,5 +20,6 @@
   - `backend/internal/pkg/httputil/body_amplification_evidence_test.go`
   - `backend/internal/pkg/apicompat/chatcompletions_amplification_evidence_test.go`
   - `backend/internal/securityaudit/prompt_amplification_evidence_test.go`
+  - `backend/internal/service/gateway_forward_chain_amplification_evidence_test.go`：/v1/messages 改写链逐步测量。实测：Claude Code 客户端路径总 churn 8.5×，其中 FilterThinkingBlocks 单步 6.4×（无条件泛型图 unmarshal，无 fast path；对比 StripEmptyTextBlocks/FilterWebSearchHistoryBlocks 均为 0）；第三方客户端 mimicry 路径总 churn 49.3×（applyToolsLastCacheBreakpoint 单步 28.3×）。这两个数字是后续优化 patch 的候选靶点。
 - 背景：上游 issue #4365(v0.1.156 内存暴涨，Codex 长上下文场景)、#1465(上游账号异常时内存占用高)均未解决；上游无相关修复 PR。
 - 退役条件：某个测试的"amplification appears fixed"断言开始失败，即说明上游已优化对应路径，删除该测试文件并退役依赖它的优化 patch。
