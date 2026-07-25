@@ -18,3 +18,8 @@
 
 - Issue：https://github.com/coconut49/sub2api/issues/2
 - 退役条件：上游自行修复所有调用点（rebase 冲突时以上游为准，丢弃对应 hunk）；证据测试的 deferred 子测试若因 gin 池语义变化而失败，patch 连同测试一起退役。
+
+## perf-prompt-cache-key-inject — perf(service): prompt_cache_key 注入去掉 map[string]any 往返（6.2x→1.0x）
+
+- Issue：https://github.com/coconut49/sub2api/issues/3
+- 退役条件：上游重构该注入路径（改用 sjson 或将注入并入转换器），rebase 冲突时以上游为准并删除本 patch。
