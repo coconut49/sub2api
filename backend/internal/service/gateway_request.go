@@ -1149,6 +1149,13 @@ func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
 		return body
 	}
 
+	// Fast path 2（fork）：字节级检查对开启 thinking 的请求必然穿透（顶层
+	// "thinking" 字段就含关键字），先用 gjson 预检是否真有需要剔除的块，
+	// 签名齐全的常态请求免付整个 body 的泛型图 unmarshal。
+	if !thinkingBlocksNeedFiltering(body) {
+		return body
+	}
+
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return body

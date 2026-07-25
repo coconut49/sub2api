@@ -32,7 +32,8 @@ import (
 func buildClaudeCodeStyleBody(messages, bytesPerMessage int) []byte {
 	text := strings.Repeat("Refactor the scheduler so retries respect the budget. ", bytesPerMessage/54+1)[:bytesPerMessage]
 	var b strings.Builder
-	b.WriteString(`{"model":"claude-sonnet-5","max_tokens":16384,"stream":true,`)
+	// 真实 Claude Code 回放 thinking 历史时必带顶层 thinking 开关；历史块签名齐全。
+	b.WriteString(`{"model":"claude-sonnet-5","max_tokens":16384,"stream":true,"thinking":{"type":"enabled","budget_tokens":8192},`)
 	b.WriteString(`"system":[{"type":"text","text":"You are Claude Code, Anthropic's official CLI for Claude."},`)
 	b.WriteString(`{"type":"text","text":"` + strings.Repeat("Project context and instructions. ", 60) + `","cache_control":{"type":"ephemeral"}}],`)
 	b.WriteString(`"tools":[`)
