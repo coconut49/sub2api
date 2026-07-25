@@ -8,3 +8,8 @@
 
 - 用途：fork 的自我描述与自动化。CLAUDE.md、`.fork/`、`fork-sync.yml`、`fork-image.yml`。
 - 生命周期：长期维护，不适用退役——这是 fork 自身的基础设施，上游没有对应物，不随上游演进而消亡。
+
+## perf-evidence — test(gateway): 请求热路径内存分配测量基线
+
+- Issue：https://github.com/coconut49/sub2api/issues/1
+- 退役条件：某测试的 "amplification appears fixed" 断言失败 = 上游已优化对应路径，删除该测试并退役依赖它的优化 patch。
