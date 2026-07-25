@@ -2,7 +2,7 @@
 
 `main` 上位于上游 base tag 之后的每个 commit 在此登记一个条目。新增、修改、删除 patch 时同步更新本文件。
 
-登记格式约定：性能/正确性类 patch 用票据体（标题 = 一句话现象 + 技术定位；正文 = 当前行为 / 预期行为 / 如何修复 / 影响面与风险 / 涉及文件 / 退役条件）。读者假定为不熟悉本仓库与业务背景的专业软件工程师：技术名词（worker pool、sync.Pool、gjson 等）保留原文，需要解释的是仓库特有的业务链路。
+登记格式约定：性能/正确性类 patch 用票据体。标题 = `type(scope): 缺陷/变更的精确陈述 + 可量化影响`（与 Jira/Linear issue title 同标准：可讲清、可委派、可 review，不用比喻）；正文 = 当前行为 / 预期行为 / 如何修复 / 影响面与风险 / 涉及文件 / 退役条件。读者假定为不熟悉本仓库与业务背景的专业软件工程师：技术名词（worker pool、sync.Pool、gjson 等）保留原文，需要解释的是仓库特有的业务链路。
 
 ## fork-infra — fork 基础设施
 
@@ -15,7 +15,7 @@
 - 涉及：以上游 commit 为准（backend constants / bedrock_request / billing_service / pricing_service / pricing JSON / 前端白名单与 scope 简称，含回归测试 `claude_opus5_test.go`）。pricing JSON 的改动是上游自己的内容，不违反「不本地修改该文件」规则。
 - 退役条件：rebase 到包含 `6c9b84cc7` 的上游 release tag 时，git 因 patch-id 相同自动丢弃本 commit；届时删除本条目即可。
 
-## perf-evidence — Ticket 0：内存放大测量基线（先量化，再动手）
+## perf-evidence — Ticket 0 · test(gateway): 建立请求热路径内存分配测量基线,量化各环节放大倍数
 
 - **背景**：sub2api 是把 Claude/OpenAI 订阅账号转成 API 服务的网关。上游 issue #4365（v0.1.156 内存暴涨、Codex 长上下文场景下几个并发即 OOM）、#1465（上游账号异常时内存占用高）指向请求处理链存在内存放大，但均无量化数据。
 - **当前行为**：无法回答"一个请求的内存开销是请求体的几倍、热点在哪一步"。
@@ -33,7 +33,7 @@
   - `backend/internal/service/gateway_forward_chain_amplification_evidence_test.go`
 - **退役条件**：某测试的"amplification appears fixed"断言失败 = 上游已优化对应路径，删除该测试并退役依赖它的优化 patch。
 
-## fix-usage-ctx-capture — Ticket 1：计费记录可能张冠李戴——异步 usage 闭包延迟读已被复用的 gin.Context
+## fix-usage-ctx-capture — Ticket 1 · fix(handler): 异步 usage 闭包在 handler 返回后读取 gin.Context,context 池复用导致跨请求计费归因错误与 data race(11 处调用点)
 
 - **当前行为**：请求结束后，usage 记录经有界 worker pool 异步落库。提交给 worker 的闭包捕获了 `*gin.Context`，并在**闭包执行时**才调用 `clientRequestedUsageFields(c, ...)` 从 `c.Request.Context()` 读取客户端请求的模型名。但 handler 返回后 gin 会把 Context 放回 sync.Pool 并绑定到下一个请求，因此 worker 繁忙时闭包读到的是**另一个并发请求**的 RequestedPublicModel——usage 记录的渠道归因字段串号，同时构成 data race；闭包还把整个 Context 引用图（含完整请求体）钉在队列中（上限 16384 条）。
 - **预期行为**：所有传给异步闭包的数据在 handler 栈上求值完毕，闭包只捕获标量/值，不持有 `*gin.Context`。
@@ -44,7 +44,7 @@
   - 新增：`backend/internal/handler/gateway_usage_context_capture_evidence_test.go`。
 - **退役条件**：上游自行修复所有调用点（rebase 冲突时以上游为准，丢弃对应 hunk）；证据测试的 deferred 子测试若因 gin 池语义变化而失败，patch 连同测试一起退役。
 
-## perf-prompt-cache-key-inject — Ticket 2：为写入一个字段反序列化整个请求体——prompt_cache_key 注入的 map[string]any 往返
+## perf-prompt-cache-key-inject — Ticket 2 · perf(service): chat_completions API-key 路径注入 prompt_cache_key 时对整个请求体做 map[string]any 往返,分配放大 6.2x→1.0x
 
 - **当前行为**：`/v1/chat/completions` 请求经 API-key 类型的 OpenAI 账号转发时，需在已序列化的 Responses 请求体上注入 `prompt_cache_key` 字段（会话级 prompt 缓存路由键）。原实现将整个 body `json.Unmarshal` 成 `map[string]any`、set 一个键、再 `json.Marshal` 回来——实测 churn 为 body 的 6.21×。
 - **预期行为**：写入单个顶层字段只付约一次 body 复制的代价（~1×）。
@@ -55,7 +55,7 @@
   - 修改：`openai_gateway_chat_completions.go` API-key 分支 15 行换 6 行调用。
 - **退役条件**：上游重构该注入路径（改用 sjson 或将注入并入转换器），rebase 冲突时以上游为准并删除本 patch。
 
-## perf-thinking-precheck — Ticket 3：无需过滤也付全量解析——FilterThinkingBlocks 缺常态 fast path
+## perf-thinking-precheck — Ticket 3 · perf(service): FilterThinkingBlocks 对无需过滤的 thinking 请求仍执行全量泛型反序列化,增加 gjson 预检后该步 6.4x→0,整链 8.5x→2.1x
 
 - **背景**：Anthropic extended thinking 下，assistant 历史消息含带 `signature` 的 thinking block，客户端多轮对话时原样回传；签名缺失/无效会被上游 400 拒绝，故网关在转发前调用 `FilterThinkingBlocks` 剔除坏块。
 - **当前行为**：该函数已有字节级 fast path（`bytes.Contains` 探测 thinking 关键字），但开启 thinking 的请求顶层必带 `"thinking"` 字段，探测必然命中穿透，于是**签名齐全、无需剔除任何块的常态请求**（Claude Code 主流量）也要把整个 body `json.Unmarshal` 成 `map[string]any` 检查一遍：单步 churn 6.4×，占整条改写链 8.5× 的大头。同链路的 StripEmptyTextBlocks / FilterWebSearchHistoryBlocks 均有有效 fast path（实测 0×），唯独此步缺失。
