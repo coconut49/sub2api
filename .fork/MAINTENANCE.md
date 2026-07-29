@@ -19,7 +19,7 @@
 1. `git rebase --onto <新tag> <旧base> main`，启用 `rerere`（rr-cache 通过 actions/cache 持久化，同型冲突只需人/agent 解一次）。
 2. 冲突时由 Claude agent 按 `.fork/prompts/resolve-rebase.md` 解决并完成 rebase。
 3. 跑与上游 CI 相同的测试（backend unit + integration + frontend）。
-4. 通过后 `git push --force-with-lease origin main`，打 `v*-fork.N` tag 并推送，再 dispatch `fork-image.yml` 构建镜像（`GITHUB_TOKEN` 推 tag 不产生 push 事件，靠 tag push 触发不了）。
+4. 通过后 `git push --force-with-lease origin main`，打 `v*-fork.N` tag 并推送；tag push 事件触发 `fork-image.yml` 构建镜像。推送走 `FORK_SYNC_TOKEN`（见「环境事实」），`GITHUB_TOKEN` 推不了含 workflow 文件变更的 commit，其推送也不产生 push 事件。
 5. 任一步失败：中止的 rebase 直接 abort；已完成 rebase 但测试失败的结果推到 `sync-failed/*` 分支；开 issue 告知，等本地处理。
 
 处理 `sync-failed/*` 分支时：本地 checkout 该分支，修复后按「本地开发流程」推回 main，并删除该分支与关联 issue。
@@ -54,11 +54,12 @@
 ## 镜像
 
 - `ghcr.io/coconut49/sub2api:<tag>` 与 `:latest`，linux/amd64 + linux/arm64。
-- 由 `.github/workflows/fork-image.yml` 构建：本地手动推 `v*-fork.*` tag 走 push 触发；fork-sync 推的 tag 走 workflow_dispatch（见「自动同步」）。版本号取 tag 去掉前导 `v` 后经 Dockerfile 的 `ARG VERSION` 注入。
+- 由 `.github/workflows/fork-image.yml` 构建：`v*-fork.*` tag push 触发（本地手动推或 fork-sync 用 PAT 推均产生 push 事件）。版本号取 tag 去掉前导 `v` 后经 Dockerfile 的 `ARG VERSION` 注入。
 
 ## 环境事实（新环境接手时核对）
 
 - GitHub fork 上已禁用继承自上游的 `release.yml`（会被 `v*` tag 误触发）、`security-scan.yml`、`cla.yml`；`backend-ci.yml` 保持启用，作为 push 后的第二道测试关。
 - Repo secret `CLAUDE_CODE_OAUTH_TOKEN`：Claude 订阅的长期 OAuth token（`claude setup-token` 生成），供 fork-sync 的冲突解决 agent 使用。
+- Repo secret `FORK_SYNC_TOKEN`：fine-grained PAT，仅授权本仓库，权限 Contents/Workflows/Issues 均 Read-Write，供 fork-sync 推送与开 issue。上游改动 `.github/workflows/*` 时，`GITHUB_TOKEN` 推送会被拒（无 workflows 权限且不可授予），必须用 PAT。注意 PAT 有效期，过期后 fork-sync 会连续失败且无法开 issue 通知。
 - 本地 clone：`git config rerere.enabled true`、`git config pull.rebase true`；`main` 追踪 `origin/main`（`git branch --set-upstream-to=origin/main main`）。
 - fork-sync 会 force-push `main`，本地同步只用 `git pull --rebase`（本地未推送的 commit 会被重放到新 main 上）；编辑器分支指示器的 ahead/behind 以 origin/main 为参照。

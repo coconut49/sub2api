@@ -8,10 +8,10 @@ on:
     - cron: '23 */2 * * *'
   workflow_dispatch: {}
 
+# 推送、开 issue 均走 FORK_SYNC_TOKEN（fine-grained PAT）：GITHUB_TOKEN
+# 不能推送含 workflow 文件变更的 commit（无法授予 workflows 权限）。
 permissions:
-  contents: write
-  issues: write
-  actions: write
+  contents: read
 
 concurrency:
   group: fork-sync
@@ -25,6 +25,7 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          token: ${{ secrets.FORK_SYNC_TOKEN }}
 
       - name: Detect upstream release
         id: detect
@@ -136,21 +137,14 @@ jobs:
           while git rev-parse -q --verify "refs/tags/${LATEST}-fork.${N}" >/dev/null; do N=$((N + 1)); done
           TAG="${LATEST}-fork.${N}"
           git tag -a "$TAG" -m "Rebase fork patches onto ${LATEST} (was ${BASE})"
+          # PAT 推 tag 产生 push 事件，fork-image.yml 由此自动触发
           git push origin "$TAG"
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
           echo "released $TAG"
-
-      # GITHUB_TOKEN 推 tag 不产生 push 事件（Actions 防递归），须显式 dispatch 镜像构建
-      - name: Trigger image build
-        if: steps.detect.outputs.up_to_date == 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run fork-image.yml --ref "$TAG"
 
       - name: Report failure
         if: failure()
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.FORK_SYNC_TOKEN }}
         run: |
           if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then
             git rebase --abort || true
